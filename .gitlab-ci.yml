@@ -1,0 +1,106 @@
+variables:
+  AWS_ROLE_SESSION_NAME: "gitlab-$CI_PIPELINE_ID-$CI_JOB_NAME"
+
+stages:
+  - terraform-plan
+  - terraform-apply
+  - terraform-plan-prd
+  - terraform-apply-prd
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      variables:
+        ENV: "dev"
+        IS_FEATURE: "true"
+    - if: $CI_COMMIT_REF_NAME =~ /^feature.*/ || $CI_COMMIT_REF_NAME =~ /^bugfix.*/ || $CI_COMMIT_REF_NAME =~ /^hotfix.*/
+      when: never
+    - if: $CI_COMMIT_REF_NAME == "develop" && $CI_PIPELINE_SOURCE != "merge_request_event"
+      variables:
+        ENV: "dev"
+        IS_FEATURE: "false"
+    - if: $CI_COMMIT_REF_NAME == "stage" && $CI_PIPELINE_SOURCE != "merge_request_event"
+      variables:
+        ENV: "stg"
+        IS_FEATURE: "false"
+    - if: $CI_COMMIT_REF_NAME == "master" && $CI_PIPELINE_SOURCE != "merge_request_event"
+      variables:
+        ENV: "prd"
+        IS_FEATURE: "false"
+
+.assume-role-template: &assume_role # Set AWS_ACCOUNT
+  - ASSUME_ROLE_CREDENTIALS=$(aws sts assume-role --role-arn $AWS_DEPLOY_ROLE_ARN --role-session-name ${AWS_ROLE_SESSION_NAME})
+  - export AWS_ACCESS_KEY_ID=$(echo $ASSUME_ROLE_CREDENTIALS | jq .Credentials.AccessKeyId | sed 's/"//g' )
+  - export AWS_SECRET_ACCESS_KEY=$(echo $ASSUME_ROLE_CREDENTIALS | jq .Credentials.SecretAccessKey | sed 's/"//g' )
+  - export AWS_SESSION_TOKEN=$(echo $ASSUME_ROLE_CREDENTIALS | jq .Credentials.SessionToken | sed 's/"//g' )
+  - aws sts get-caller-identity
+
+terraform-plan:
+  stage: terraform-plan
+  tags:
+    - shared
+  environment:
+    name: $ENV
+  script:
+    - *assume_role
+    - cd terraform/
+    - ./get-setenv.sh configurations/${ENV}.tfvars
+    - terraform init
+    - terraform plan -var-file configurations/${ENV}.tfvars
+  resource_group: $ENV
+  rules:
+    - if: $IS_FEATURE == "false" && ($CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "stage")
+
+terraform-apply:
+  stage: terraform-apply
+  tags:
+    - shared
+  environment:
+    name: $ENV
+  script:
+    - *assume_role
+    - cd terraform/
+    - ./get-setenv.sh configurations/${ENV}.tfvars
+    - terraform init
+    - terraform apply -auto-approve -var-file configurations/${ENV}.tfvars
+  resource_group: ${ENV}
+  when: manual
+  needs:
+    - terraform-plan
+  rules:
+    - if: $IS_FEATURE == "false" && ($CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "stage")
+
+terraform-plan-prd:
+  stage: terraform-plan-prd
+  tags:
+    - shared
+  environment:
+    name: $ENV
+  script:
+    - *assume_role
+    - cd terraform/
+    - ./get-setenv.sh configurations/${ENV}.tfvars
+    - terraform init
+    - terraform plan -var-file configurations/${ENV}.tfvars
+  resource_group: $ENV
+  only:
+    - master
+
+terraform-apply-prd:
+  stage: terraform-apply-prd
+  tags:
+    - shared
+  environment:
+    name: $ENV
+  script:
+    - *assume_role
+    - cd terraform/
+    - ./get-setenv.sh configurations/${ENV}.tfvars
+    - terraform init
+    - terraform apply -auto-approve -var-file configurations/${ENV}.tfvars
+  resource_group: ${ENV}
+  when: manual
+  needs:
+    - terraform-plan-prd
+  only:
+    - master
