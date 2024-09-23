@@ -3,7 +3,7 @@ aws_shot_region    = "an2"
 environment        = "com"
 service_name       = "dept-ssgd"
 s3_tfstate_file    = "network.tfstate"
-aws_account_number = 314667246064
+aws_account_number = 2222222
 
 ## domain
 domains = {
